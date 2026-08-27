@@ -5,6 +5,12 @@
   "keywords": ["pi-package", "pi-extension", "quota", "usage", "commandcode", "opencode", "monitoring"],
   "license": "MIT",
   "author": "Anhydrite",
+  "files": [
+    "extensions/",
+    "assets/preview.png",
+    "README.md",
+    "LICENSE"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Anhydrite/pi-quota-monitoring.git"
@@ -13,6 +19,7 @@
     "@earendil-works/pi-coding-agent": "*"
   },
   "pi": {
-    "extensions": ["./extensions/quota-monitor.ts"]
+    "extensions": ["./extensions/quota-monitor.ts"],
+    "image": "./assets/preview.png"
   }
 }
