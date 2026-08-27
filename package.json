@@ -1,0 +1,18 @@
+{
+  "name": "pi-quota-monitoring",
+  "version": "1.0.0",
+  "description": "Pi extension — shows subscription quota usage (%) in the status bar for Command Code and OpenCode Go, next to the TPS readout",
+  "keywords": ["pi-package", "pi-extension", "quota", "usage", "commandcode", "opencode", "monitoring"],
+  "license": "MIT",
+  "author": "Anhydrite",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Anhydrite/pi-quota-monitoring.git"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": ["./extensions/quota-monitor.ts"]
+  }
+}
