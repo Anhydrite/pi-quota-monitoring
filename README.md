@@ -1,6 +1,6 @@
 # pi-quota-monitoring
 
-A [pi](https://pi.dev) extension that shows your **subscription quota usage (%)** in the status bar — right next to your TPS readout.
+A [pi](https://pi.dev) extension that shows your **subscription quota usage (%)** in the status bar.
 
 Supported providers:
 
@@ -13,12 +13,14 @@ The quota only appears when you're using a model from a supported provider. Swit
 
 ## What it looks like
 
-In the pi footer, to the **right of your TPS** (from [pi-token-speed](https://github.com/gsanhueza/pi-token-speed)):
+In the pi footer, the extension shows one segment per usage window:
 
 ```
-⚡ TPS: 42.1 tok/s  CC 5h: 15% resets in 2h · mois: 3% resets in 4d
-⚡ TPS: 42.1 tok/s  OG 5h: 10% resets in 2h · mois: 27% resets in 13d
+CC 5h: 15% resets in 2h · mois: 3% resets in 4d
+OG 5h: 10% resets in 2h · mois: 27% resets in 13d
 ```
+
+If you also have [pi-token-speed](https://github.com/gsanhueza/pi-token-speed) installed, the quota appears to the **right of your TPS** readout (the `zz-quota` status key sorts right after `tokenSpeed`).
 
 - **Two windows shown**: the **5-hour** window (tighter limit, with reset countdown) and the **monthly** billing period
 - **Color-coded**: green (ok), yellow (≥70% used), red (≥90% used)
@@ -46,7 +48,7 @@ The extension reads the API key from pi's model registry (falling back to the st
 - **Command Code**: `GET https://api.commandcode.ai/alpha/whoami` → `GET /alpha/billing/credits` + `GET /alpha/usage/summary` — computes the 5-hour window percentage and the monthly billing-period percentage (`used / total`).
 - **OpenCode Go**: `GET https://opencode.ai/zen/go/v1/usage` — the API returns `rolling` (≈5h) and `monthly` percentages directly.
 
-The status is set under the key `zz-quota`, which sorts alphabetically just after `tokenSpeed` in pi's footer, placing it to the **right** of the TPS display.
+The status is set under the key `zz-quota`, which sorts alphabetically just after `tokenSpeed` in pi's footer (when [pi-token-speed](https://github.com/gsanhueza/pi-token-speed) is installed), placing the quota to the **right** of the TPS display.
 
 ## License
 

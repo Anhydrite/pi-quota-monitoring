@@ -1,7 +1,7 @@
 {
   "name": "pi-quota-monitoring",
   "version": "1.0.0",
-  "description": "Pi extension — shows subscription quota usage (%) in the status bar for Command Code and OpenCode Go, next to the TPS readout",
+  "description": "Pi extension — shows subscription quota usage (%) in the status bar for Command Code and OpenCode Go",
   "keywords": ["pi-package", "pi-extension", "quota", "usage", "commandcode", "opencode", "monitoring"],
   "license": "MIT",
   "author": "Anhydrite",
