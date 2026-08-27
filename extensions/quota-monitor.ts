@@ -10,8 +10,9 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 //   • commandcode  (Command Code)  → api.commandcode.ai   → CC 23%
 //   • opencode-go  (OpenCode Go)   → opencode.ai          → OG 27%
 //
-// The status key ("zz-quota") sorts AFTER "tokenSpeed" (the TPS display from
-// pi-token-speed), so the quota appears to the RIGHT of the TPS readout in the
+// The status key ("zz-quota") sorts AFTER "tokenSpeed" (a status set by the
+// optional pi-token-speed package), so when that package is installed the
+// quota appears to the RIGHT of its TPS readout in the footer.
 // footer. The display clears automatically when you switch to a model whose
 // provider has no quota endpoint.
 // ---------------------------------------------------------------------------
