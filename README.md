@@ -32,14 +32,14 @@ If you also have [pi-token-speed](https://github.com/gsanhueza/pi-token-speed) i
 ## Install
 
 ```bash
-pi install git:github.com/Anhydrite/pi-quota-monitoring
+pi install npm:pi-quota-monitoring
 ```
 
 Then `/reload` or restart pi.
 
 ## Usage
 
-Nothing to do — it just works. Pick a model from a supported provider and the quota appears in the footer.
+Nothing to configure. Pick a model from a supported provider and the quota shows up in the footer.
 
 ## How it works
 
