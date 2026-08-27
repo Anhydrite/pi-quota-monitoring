@@ -90,10 +90,24 @@ function fmtReset(epochSeconds: number | null): string {
   const diffMs = epochSeconds * 1000 - Date.now();
   if (diffMs <= 0) return "";
   const minutes = Math.ceil(diffMs / 60_000);
-  if (minutes < 60) return ` ${minutes}m`;
+  if (minutes < 60) return ` resets in ${minutes}m`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return ` ${hours}h`;
-  return ` ${Math.floor(hours / 24)}d`;
+  if (hours < 24) return ` resets in ${hours}h`;
+  return ` resets in ${Math.floor(hours / 24)}d`;
+}
+
+/** Normalize a raw reset timestamp (epoch seconds, epoch ms, or ISO string) to epoch seconds. */
+function toEpochSeconds(value: number | string | null | undefined): number | null {
+  if (value == null) return null;
+  if (typeof value === "number") return value > 1e12 ? Math.round(value / 1000) : value;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : Math.round(parsed / 1000);
+}
+
+/** Estimate the next calendar-month start (Command Code monthly credits reset on the 1st). */
+function nextMonthStartEpoch(): number {
+  const now = new Date();
+  return Math.floor(new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0).getTime() / 1000);
 }
 
 /** Command Code: credits + usage summary → 5h window and monthly billing period. */
@@ -110,7 +124,12 @@ async function fetchCommandCodeQuota(apiKey: string, timeoutMs: number): Promise
 
   const credits = (await fetchJson(`${base}/alpha/billing/credits${qs}`, apiKey, timeoutMs)) as
     | {
-        credits?: { monthlyCredits?: number; purchasedCredits?: number; freeCredits?: number };
+        credits?: {
+          monthlyCredits?: number;
+          purchasedCredits?: number;
+          freeCredits?: number;
+          monthlyResetAt?: number | string;
+        };
         windowLimits?: {
           fiveHour?: { used: number; cap: number; resetAt?: number };
           weekly?: { used: number; cap: number; resetAt?: number };
@@ -135,20 +154,20 @@ async function fetchCommandCodeQuota(apiKey: string, timeoutMs: number): Promise
   const fiveHour = credits?.windowLimits?.fiveHour;
   if (fiveHour && fiveHour.cap > 0) {
     const pct = (fiveHour.used / fiveHour.cap) * 100;
-    const resetAt = fiveHour.resetAt
-      ? fiveHour.resetAt > 1e12
-        ? Math.round(fiveHour.resetAt / 1000)
-        : fiveHour.resetAt
-      : null;
-    segments.push({ label: "5h", percent: pct, resetSuffix: fmtReset(resetAt) });
+    segments.push({ label: "5h", percent: pct, resetSuffix: fmtReset(toEpochSeconds(fiveHour.resetAt)) });
   }
 
   // Monthly billing period (spent / total for the month).
   if (total > 0) {
-    segments.push({ label: "mois", percent: (spent / total) * 100, resetSuffix: "" });
+    // The billing API only exposes a reset timestamp for the 5h window, so
+    // fall back to the next calendar-month start for the monthly bucket
+    // (unless a monthlyResetAt ever shows up in the response).
+    const monthlyReset = toEpochSeconds(credits?.credits?.monthlyResetAt) ?? nextMonthStartEpoch();
+    segments.push({ label: "mois", percent: (spent / total) * 100, resetSuffix: fmtReset(monthlyReset) });
   }
 
-  if (segments.length === 0) return { segments: [{ label: "mois", percent: 0, resetSuffix: "" }] };
+  if (segments.length === 0)
+    return { segments: [{ label: "mois", percent: 0, resetSuffix: fmtReset(nextMonthStartEpoch()) }] };
   return { segments };
 }
 
@@ -175,13 +194,13 @@ async function fetchOpenCodeGoQuota(
 
   // Rolling window ≈ 5 hours → shown as "5h".
   if (usage.rolling && typeof usage.rolling.percent === "number") {
-    const resetEpoch = usage.rolling.resetsAt ? Date.parse(usage.rolling.resetsAt) / 1000 : null;
+    const resetEpoch = toEpochSeconds(usage.rolling.resetsAt);
     segments.push({ label: "5h", percent: usage.rolling.percent, resetSuffix: fmtReset(resetEpoch) });
   }
 
   // Monthly window.
   if (usage.monthly && typeof usage.monthly.percent === "number") {
-    const resetEpoch = usage.monthly.resetsAt ? Date.parse(usage.monthly.resetsAt) / 1000 : null;
+    const resetEpoch = toEpochSeconds(usage.monthly.resetsAt);
     segments.push({ label: "mois", percent: usage.monthly.percent, resetSuffix: fmtReset(resetEpoch) });
   }
 

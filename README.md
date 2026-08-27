@@ -16,13 +16,13 @@ The quota only appears when you're using a model from a supported provider. Swit
 In the pi footer, to the **right of your TPS** (from [pi-token-speed](https://github.com/gsanhueza/pi-token-speed)):
 
 ```
-⚡ TPS: 42.1 tok/s  CC 5h: 15% 2h · mois: 3%
-⚡ TPS: 42.1 tok/s  OG 5h: 10% 2h · mois: 27% 13d
+⚡ TPS: 42.1 tok/s  CC 5h: 15% resets in 2h · mois: 3% resets in 4d
+⚡ TPS: 42.1 tok/s  OG 5h: 10% resets in 2h · mois: 27% resets in 13d
 ```
 
 - **Two windows shown**: the **5-hour** window (tighter limit, with reset countdown) and the **monthly** billing period
 - **Color-coded**: green (ok), yellow (≥70% used), red (≥90% used)
-- **Reset countdown**: shows the time until the active usage window resets (`2h`, `5m`, `1d`)
+- **Reset countdown**: each window shows `resets in 2h` / `5m` / `1d` until it resets — the 5h window uses the provider's real reset timestamp; the monthly window uses the provider's reset timestamp when available (OpenCode Go), otherwise the next calendar-month start (Command Code)
 - **Auto-refresh**: every 60s and after every agent turn
 - **Command Code** shows the 5-hour window + monthly billing-period total
 - **OpenCode Go** shows the rolling (≈5h) + monthly windows
