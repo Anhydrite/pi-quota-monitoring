@@ -20,6 +20,6 @@
   },
   "pi": {
     "extensions": ["./extensions/quota-monitor.ts"],
-    "image": "./assets/preview.png"
+    "image": "https://raw.githubusercontent.com/Anhydrite/pi-quota-monitoring/main/assets/preview.png"
   }
 }
