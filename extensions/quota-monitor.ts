@@ -218,12 +218,14 @@ class QuotaMonitor {
   private ctx: ExtensionContext | null = null;
   private timer: TimerHandle | null = null;
 
-  /** Re-arm the display for the current model. */
+  /** Re-arm the display for the current model with a FRESH context. */
   sync(ctx: ExtensionContext): void {
+    // A new session_start (startup/reload/new/resume/fork) replaces the
+    // session; the previous ctx would be stale and crash on any access.
     this.ctx = ctx;
     const spec = this.currentSpec();
     if (spec) {
-      void this.refresh();
+      void this.refresh().catch(() => this.clearStatus());
       this.ensureTimer();
     } else {
       this.clear();
@@ -232,7 +234,16 @@ class QuotaMonitor {
 
   clear(): void {
     this.stopTimer();
-    this.ctx?.ui.setStatus(STATUS_KEY, undefined);
+    this.clearStatus();
+  }
+
+  /** Clear the status entry without touching a possibly-stale ctx. */
+  private clearStatus(): void {
+    try {
+      this.ctx?.ui.setStatus(STATUS_KEY, undefined);
+    } catch {
+      // ctx is stale (reload happened) — nothing to clear on this ctx.
+    }
   }
 
   dispose(): void {
@@ -247,7 +258,7 @@ class QuotaMonitor {
   private ensureTimer(): void {
     if (this.timer) return;
     const timer = setInterval(() => {
-      if (this.currentSpec()) void this.refresh();
+      if (this.currentSpec()) void this.refresh().catch(() => this.clearStatus());
       else this.clear();
     }, REFRESH_INTERVAL_MS);
     // In Node, unref() lets the process exit even while the timer is pending.
@@ -312,11 +323,19 @@ class QuotaMonitor {
     const ctx = this.ctx;
     const spec = this.currentSpec();
     if (!ctx || !spec) return;
-    const theme = ctx.ui.theme;
+
+    let theme;
+    try {
+      theme = ctx.ui.theme;
+    } catch {
+      // ctx is stale (reload happened between sync() and this refresh) —
+      // bail out silently instead of crashing pi.
+      return;
+    }
 
     const apiKey = await this.getApiKey(spec.provider);
     if (!apiKey) {
-      ctx.ui.setStatus(STATUS_KEY, undefined);
+      this.safeSetStatus(ctx, undefined);
       return;
     }
 
@@ -327,7 +346,7 @@ class QuotaMonitor {
 
     if (!data) {
       // Don't clutter the footer on transient failures.
-      ctx.ui.setStatus(STATUS_KEY, undefined);
+      this.safeSetStatus(ctx, undefined);
       return;
     }
 
@@ -340,7 +359,16 @@ class QuotaMonitor {
         return `${theme.fg("dim", `${seg.label}:`)} ${theme.fg(color, `${pct}%`)}${theme.fg("dim", seg.resetSuffix)}`;
       })
       .join(theme.fg("dim", " · "))}`;
-    ctx.ui.setStatus(STATUS_KEY, text);
+    this.safeSetStatus(ctx, text);
+  }
+
+  /** setStatus that never throws, even if the ctx became stale mid-flight. */
+  private safeSetStatus(ctx: ExtensionContext, text: string | undefined): void {
+    try {
+      ctx.ui.setStatus(STATUS_KEY, text);
+    } catch {
+      // stale ctx — the next session_start will re-arm with a fresh one.
+    }
   }
 }
 
@@ -363,7 +391,11 @@ export default function (pi: ExtensionAPI) {
 
   // Refresh when the agent finishes a turn, so the % tracks actual usage.
   pi.on("agent_end", (_event, ctx) => {
-    if (ctx.model?.provider && PROVIDERS[ctx.model.provider]) void monitor.refresh();
+    if (ctx.model?.provider && PROVIDERS[ctx.model.provider]) {
+      // agent_end gives a fresh ctx — re-arm from it so a reload that
+      // happened between events doesn't leave us holding a stale one.
+      monitor.sync(ctx);
+    }
   });
 
   pi.on("session_shutdown", () => {
