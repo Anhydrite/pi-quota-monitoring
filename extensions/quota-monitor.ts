@@ -10,13 +10,13 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 //   • commandcode  (Command Code)  → api.commandcode.ai   → CC 23%
 //   • opencode-go  (OpenCode Go)   → opencode.ai          → OG 27%
 //
-// The status key ("quota") sorts next to "tokenSpeed" (the TPS display from
-// pi-token-speed), so the quota appears right next to the TPS readout in the
+// The status key ("zz-quota") sorts AFTER "tokenSpeed" (the TPS display from
+// pi-token-speed), so the quota appears to the RIGHT of the TPS readout in the
 // footer. The display clears automatically when you switch to a model whose
 // provider has no quota endpoint.
 // ---------------------------------------------------------------------------
 
-const STATUS_KEY = "quota";
+const STATUS_KEY = "zz-quota";
 
 const REFRESH_INTERVAL_MS = 60_000;
 const FETCH_TIMEOUT_MS = 10_000;
@@ -51,11 +51,17 @@ const PROVIDERS: Record<string, ProviderSpec> = {
 // Quota fetch logic
 // ---------------------------------------------------------------------------
 
-interface QuotaData {
+interface QuotaSegment {
+  /** Short window label, e.g. "5h" or "mois" */
+  label: string;
   /** Percent used (0-100). May be fractional. */
   percent: number;
-  /** Optional short reset countdown suffix, e.g. " 5h" */
+  /** Optional short reset countdown suffix, e.g. " 2h" */
   resetSuffix: string;
+}
+
+interface QuotaData {
+  segments: QuotaSegment[];
 }
 
 async function fetchJson(
@@ -90,7 +96,7 @@ function fmtReset(epochSeconds: number | null): string {
   return ` ${Math.floor(hours / 24)}d`;
 }
 
-/** Command Code: credits + usage summary → percent of billing period spent. */
+/** Command Code: credits + usage summary → 5h window and monthly billing period. */
 async function fetchCommandCodeQuota(apiKey: string, timeoutMs: number): Promise<QuotaData | null> {
   const base = PROVIDERS.commandcode.baseUrl;
 
@@ -123,7 +129,9 @@ async function fetchCommandCodeQuota(apiKey: string, timeoutMs: number): Promise
   const spent = summary?.totalCost ?? 0;
   const total = remaining + spent;
 
-  // Prefer the 5-hour window (the tighter limit) when available.
+  const segments: QuotaSegment[] = [];
+
+  // 5-hour window (the tighter limit).
   const fiveHour = credits?.windowLimits?.fiveHour;
   if (fiveHour && fiveHour.cap > 0) {
     const pct = (fiveHour.used / fiveHour.cap) * 100;
@@ -132,14 +140,19 @@ async function fetchCommandCodeQuota(apiKey: string, timeoutMs: number): Promise
         ? Math.round(fiveHour.resetAt / 1000)
         : fiveHour.resetAt
       : null;
-    return { percent: pct, resetSuffix: fmtReset(resetAt) };
+    segments.push({ label: "5h", percent: pct, resetSuffix: fmtReset(resetAt) });
   }
 
-  if (total <= 0) return { percent: 0, resetSuffix: "" };
-  return { percent: (spent / total) * 100, resetSuffix: "" };
+  // Monthly billing period (spent / total for the month).
+  if (total > 0) {
+    segments.push({ label: "mois", percent: (spent / total) * 100, resetSuffix: "" });
+  }
+
+  if (segments.length === 0) return { segments: [{ label: "mois", percent: 0, resetSuffix: "" }] };
+  return { segments };
 }
 
-/** OpenCode Go: /usage returns rolling/weekly/monthly percentages directly. */
+/** OpenCode Go: /usage returns rolling (≈5h) and monthly percentages directly. */
 async function fetchOpenCodeGoQuota(
   apiKey: string,
   timeoutMs: number,
@@ -158,15 +171,22 @@ async function fetchOpenCodeGoQuota(
   const usage = raw?.usage;
   if (!usage) return null;
 
-  // Show the tightest window that's meaningful: rolling (≈5h) → weekly → monthly.
-  for (const key of ["rolling", "weekly", "monthly"] as const) {
-    const w = usage[key];
-    if (w && typeof w.percent === "number") {
-      const resetEpoch = w.resetsAt ? Date.parse(w.resetsAt) / 1000 : null;
-      return { percent: w.percent, resetSuffix: fmtReset(resetEpoch) };
-    }
+  const segments: QuotaSegment[] = [];
+
+  // Rolling window ≈ 5 hours → shown as "5h".
+  if (usage.rolling && typeof usage.rolling.percent === "number") {
+    const resetEpoch = usage.rolling.resetsAt ? Date.parse(usage.rolling.resetsAt) / 1000 : null;
+    segments.push({ label: "5h", percent: usage.rolling.percent, resetSuffix: fmtReset(resetEpoch) });
   }
-  return null;
+
+  // Monthly window.
+  if (usage.monthly && typeof usage.monthly.percent === "number") {
+    const resetEpoch = usage.monthly.resetsAt ? Date.parse(usage.monthly.resetsAt) / 1000 : null;
+    segments.push({ label: "mois", percent: usage.monthly.percent, resetSuffix: fmtReset(resetEpoch) });
+  }
+
+  if (segments.length === 0) return null;
+  return { segments };
 }
 
 // ---------------------------------------------------------------------------
@@ -292,12 +312,15 @@ class QuotaMonitor {
       return;
     }
 
-    const pct = Math.round(data.percent);
-    let color: "success" | "warning" | "error" = "success";
-    if (pct >= CRITICAL_PCT) color = "error";
-    else if (pct >= WARNING_PCT) color = "warning";
-
-    const text = `${theme.fg("dim", spec.label)} ${theme.fg(color, `${pct}%`)}${theme.fg("dim", data.resetSuffix)}`;
+    const text = `${theme.fg("dim", spec.label)} ${data.segments
+      .map((seg) => {
+        const pct = Math.round(seg.percent);
+        let color: "success" | "warning" | "error" = "success";
+        if (pct >= CRITICAL_PCT) color = "error";
+        else if (pct >= WARNING_PCT) color = "warning";
+        return `${theme.fg("dim", `${seg.label}:`)} ${theme.fg(color, `${pct}%`)}${theme.fg("dim", seg.resetSuffix)}`;
+      })
+      .join(theme.fg("dim", " · "))}`;
     ctx.ui.setStatus(STATUS_KEY, text);
   }
 }

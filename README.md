@@ -13,18 +13,19 @@ The quota only appears when you're using a model from a supported provider. Swit
 
 ## What it looks like
 
-In the pi footer, next to your TPS (from [pi-token-speed](https://github.com/gsanhueza/pi-token-speed)):
+In the pi footer, to the **right of your TPS** (from [pi-token-speed](https://github.com/gsanhueza/pi-token-speed)):
 
 ```
-CC 13% 2h   ⚡ TPS: 42.1 tok/s
-OG 10% 2h   ⚡ TPS: 42.1 tok/s
+⚡ TPS: 42.1 tok/s  CC 5h: 15% 2h · mois: 3%
+⚡ TPS: 42.1 tok/s  OG 5h: 10% 2h · mois: 27% 13d
 ```
 
+- **Two windows shown**: the **5-hour** window (tighter limit, with reset countdown) and the **monthly** billing period
 - **Color-coded**: green (ok), yellow (≥70% used), red (≥90% used)
 - **Reset countdown**: shows the time until the active usage window resets (`2h`, `5m`, `1d`)
 - **Auto-refresh**: every 60s and after every agent turn
-- **Command Code** uses the tighter 5-hour window when available, else the billing-period total
-- **OpenCode Go** uses the tightest available window: rolling → weekly → monthly
+- **Command Code** shows the 5-hour window + monthly billing-period total
+- **OpenCode Go** shows the rolling (≈5h) + monthly windows
 
 ## Install
 
@@ -42,10 +43,10 @@ Nothing to do — it just works. Pick a model from a supported provider and the 
 
 The extension reads the API key from pi's model registry (falling back to the standard auth stores), then queries each provider's usage endpoint:
 
-- **Command Code**: `GET https://api.commandcode.ai/alpha/whoami` → `GET /alpha/billing/credits` + `GET /alpha/usage/summary` — computes `used / total` from the billing period, prefers the 5-hour window limit when present.
-- **OpenCode Go**: `GET https://opencode.ai/zen/go/v1/usage` — the API returns `rolling` / `weekly` / `monthly` percentages directly.
+- **Command Code**: `GET https://api.commandcode.ai/alpha/whoami` → `GET /alpha/billing/credits` + `GET /alpha/usage/summary` — computes the 5-hour window percentage and the monthly billing-period percentage (`used / total`).
+- **OpenCode Go**: `GET https://opencode.ai/zen/go/v1/usage` — the API returns `rolling` (≈5h) and `monthly` percentages directly.
 
-The status is set under the key `quota`, which sorts alphabetically just before `tokenSpeed` in pi's footer, placing it right next to the TPS display.
+The status is set under the key `zz-quota`, which sorts alphabetically just after `tokenSpeed` in pi's footer, placing it to the **right** of the TPS display.
 
 ## License
 
