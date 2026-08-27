@@ -7,7 +7,7 @@ Supported providers:
 | Provider | Label | Quota source |
 | --- | --- | --- |
 | [Command Code](https://commandcode.ai) (`commandcode`) | `CC` | `api.commandcode.ai` billing period + 5h window |
-| [OpenCode Go](https://opencode.ai) (`oc-sdk-go`) | `OG` | `opencode.ai/zen/go/v1/usage` rolling window |
+| [OpenCode Go](https://opencode.ai) (`opencode-go`) | `OG` | `opencode.ai/zen/go/v1/usage` rolling window |
 
 The quota only appears when you're using a model from a supported provider. Switch to any other provider (e.g. `minimax`) and the display clears automatically.
 
