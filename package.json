@@ -1,7 +1,7 @@
 {
   "name": "pi-quota-monitoring",
-  "version": "1.0.2",
-  "description": "Pi extension — shows subscription quota usage (%) in the status bar for Command Code and OpenCode Go",
+  "version": "1.0.3",
+  "description": "Pi extension - shows subscription quota usage in the status bar for Command Code and OpenCode Go",
   "type": "module",
   "keywords": [
     "pi-package",
