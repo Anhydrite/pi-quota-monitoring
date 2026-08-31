@@ -1,6 +1,16 @@
 # pi-quota-monitoring
 
+[![npm version](https://img.shields.io/npm/v/pi-quota-monitoring.svg)](https://www.npmjs.com/package/pi-quota-monitoring)
+
 A [pi](https://pi.dev) extension that shows your **subscription quota usage (%)** in the status bar.
+
+## Package
+
+Available on npm: **<https://www.npmjs.com/package/pi-quota-monitoring>**
+
+```bash
+npm view pi-quota-monitoring   # see the published package
+```
 
 Supported providers:
 
