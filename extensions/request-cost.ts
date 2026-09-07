@@ -147,7 +147,8 @@ export function fmtUsd(v: number): string {
   return `$${v.toFixed(6)}`;
 }
 
-/** Compact per-part breakdown: `↑0.12m ↓0.15m R0.39m` (thousandths of a cent per part). */
+
+/** Per-part breakdown in dollars: `↑$0.00008 ↓$0.00044 R$0.00219`. */
 export function fmtBreakdown(t: {
   input: number;
   output: number;
@@ -157,8 +158,7 @@ export function fmtBreakdown(t: {
   const parts: string[] = [];
   const push = (symbol: string, v: number) => {
     if (v <= 0) return;
-    const milli = v * 1000; // 1 = $0.001
-    parts.push(`${symbol}${milli >= 10 ? milli.toFixed(0) : milli >= 1 ? milli.toFixed(1) : milli.toFixed(2)}`);
+    parts.push(`${symbol}${fmtUsd(v)}`);
   };
   push("↑", t.input);
   push("↓", t.output);
@@ -166,6 +166,7 @@ export function fmtBreakdown(t: {
   push("W", t.cacheWrite);
   return parts.join(" ");
 }
+
 
 /** Format a plan percentage that can be far below 1%. */
 export function fmtPct(pct: number): string {
@@ -181,15 +182,9 @@ export function fmtPct(pct: number): string {
  * Build the right-aligned cost segment shown next to the quota readout.
  * Returns null when there is no data to show yet.
  *
- * Example: `req $0.0009 · moy $0.0007 · 1.9% (10$)`
+ * Compact form: `req ↑$0.00003 ↓$0.00025 R$0.00220 · moy $0.00259 · $0.00776 · 0.08% de 10$`
  */
-/**
- * Build the right-aligned cost segment shown next to the quota readout.
- * Returns null when there is no data to show yet.
- *
- * Compact form: `req ↑0.12m ↓0.15m R0.39m · moy $0.0010 · 0.02%/10$`
- * (parts in thousandths of a cent when < 1 cent).
- */
+
 export function buildCostSegment(
   state: CostState,
   opts: { planUsd?: number; envPct?: number | null },
@@ -212,8 +207,10 @@ export function buildCostSegment(
   }
   const pct = pctOfPlan(state.session.total, opts.planUsd ?? 0);
   if (pct !== null && state.session.total > 0) {
-    parts.push(`${fmtPct(pct)}%/${opts.planUsd ?? 0}$`);
+    // Dollars spent next to the percentage of the paid plan.
+    parts.push(`${fmtUsd(state.session.total)} · ${fmtPct(pct)}% de ${opts.planUsd ?? 0}$`);
   }
+
   if (parts.length === 0) return null;
   return parts.join(" · ");
 }
