@@ -361,12 +361,12 @@ export function buildCostSegment(
 
     if (mult > 1) {
       const real = fmtBreakdown({ ...base, divideBy: mult });
-      if (real && real !== billed) parts.push(`réel ${real}`);
+      if (real && real !== billed) parts.push(`real ${real}`);
     }
   }
   const avg = state.session.requests > 0 ? state.session.total / state.session.requests : 0;
   if (state.session.requests > 1 && avg > 0) {
-    parts.push(`moy ${fmtUsd(avg)}`);
+    parts.push(`avg ${fmtUsd(avg)}`);
   }
   if (state.session.total > 0 && plan > 0) {
     // Real spend = billed session total / plan multiplier, out of the paid plan.

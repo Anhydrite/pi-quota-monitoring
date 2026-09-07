@@ -54,6 +54,7 @@ class RequestCostExtension {
     this.state = createCostState();
     await this.resolvePlanFromApi(ctx);
     this.applyFooter();
+    this.publishStatus();
   }
 
   private async resolvePlanFromApi(ctx: ExtensionContext): Promise<void> {
@@ -74,7 +75,22 @@ class RequestCostExtension {
 
   async setEnabled(enabled: boolean): Promise<void> {
     this.config = await saveConfig({ enabled });
-    this.applyFooter();
+    if (enabled) {
+      this.applyFooter();
+      this.publishStatus();
+    } else {
+      this.clearFooterAndStatus();
+    }
+  }
+
+  private clearFooterAndStatus(): void {
+    try {
+      this.ctx?.ui.setFooter(undefined);
+      this.ctx?.ui.setStatus("zz-cost", undefined);
+    } catch {
+      /* stale ctx */
+    }
+    this.tui = null;
   }
 
   isEnabled(): boolean {
@@ -85,7 +101,28 @@ class RequestCostExtension {
     if (event.message.role !== "assistant") return;
     const m = event.message as { provider?: string; usage?: Usage };
     if (ingestUsage(this.state, m.provider, m.usage)) {
+      this.publishStatus();
       this.requestRender();
+    }
+  }
+
+  /**
+   * Publish the cost segment as an extension status ("zz-cost"). The default
+   * footer always renders extension statuses on its third line, so the readout
+   * survives TUI re-renders and interrupts even if the custom footer is ever
+   * replaced; the custom footer (when active) also composes it right-aligned.
+   */
+  private publishStatus(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const segment = buildCostSegment(this.state, {
+      planUsd: this.plan.costUsd,
+      creditMultiplier: this.plan.multiplier,
+    });
+    try {
+      ctx.ui.setStatus("zz-cost", segment ?? undefined);
+    } catch {
+      /* stale ctx */
     }
   }
 
@@ -197,8 +234,45 @@ function getModelLabel(model: Model<unknown> | undefined): {
   };
 }
 
-/** Theme-aware footer renderer. */
+/**
+ * Theme-aware footer renderer. Wrapped defensively: a transient extension
+ * error during a TUI re-render (e.g. after an interrupt) must never blank the
+ * footer — we degrade to minimal lines instead.
+ */
 function renderFooter(
+  ctx: ExtensionContext,
+  theme: { fg(color: string, text: string): string },
+  footerData: FooterDataLike,
+  state: CostState,
+  plan: { multiplier: number; costUsd: number },
+  width: number,
+): string[] {
+  try {
+    return renderFooterInner(ctx, theme, footerData, state, plan, width);
+  } catch (err) {
+    // Never take the whole footer down on a transient render error.
+    try {
+      console.error("[quota-cost] footer render error:", err);
+    } catch {
+      /* ignore */
+    }
+    // Fallback: render at least the raw extension statuses so the footer
+    // never blanks out (avoids the readout "disappearing" after interrupts).
+    try {
+      const statuses = Array.from(footerData.getExtensionStatuses().values())
+        .map((s) => sanitize(s))
+        .filter(Boolean);
+      if (statuses.length > 0) {
+        return [truncateToWidth(theme.fg("dim", statuses.join(" ")), width, theme.fg("dim", "..."))];
+      }
+    } catch {
+      /* ignore */
+    }
+    return [];
+  }
+}
+
+function renderFooterInner(
   ctx: ExtensionContext,
   theme: { fg(color: string, text: string): string },
   footerData: FooterDataLike,
@@ -268,7 +342,10 @@ function renderFooter(
   }
 
   // Line 3: extension statuses (quotas) + cost segment right-aligned.
+  // Drop the "zz-cost" status (published for the default footer) so it is not
+  // shown twice: the custom footer composes it as the right-aligned segment.
   const statuses = Array.from(footerData.getExtensionStatuses().entries())
+    .filter(([key]) => key !== "zz-cost")
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([, text]) => sanitize(text));
   const costSegment = buildCostSegment(state, {

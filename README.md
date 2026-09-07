@@ -69,12 +69,12 @@ MIT
 Toggle with `/quota-cost` (persisted in `~/.pi/agent/settings.json` under `quotaCost`). When ON, a second segment appears on the quota line, right-aligned (hidden automatically when the terminal is too narrow):
 
 ```
-req ↑$0.220/M ↓$0.660/M R$0.007/M · réel ↑$0.031/M ↓$0.094/M R$0.001/M · moy $0.00259 · $0.00074/10$
+req ↑$0.220/M ↓$0.660/M R$0.007/M · real ↑$0.031/M ↓$0.094/M R$0.001/M · avg $0.00259 · $0.00074/10$
 ```
 
 - `req` = last assistant request, showing the **billed cost per million tokens** for `↑` input / `↓` output / `R` cache reads (derived from the real billed cost and token counts)
-- `réel` = the same rates divided by your **plan multiplier** (billed credits per paid dollar — auto-detected from the Command Code plan via the 5h/weekly window caps, e.g. GOAT = 70$ of usage per 10$ paid = ×7)
-- `moy` = session average cost per request (billed)
+- `real` = the same rates divided by your **plan multiplier** (billed credits per paid dollar — auto-detected from the Command Code plan via the 5h/weekly window caps, e.g. GOAT = 70$ of usage per 10$ paid = ×7)
+- `avg` = session average cost per request (billed)
 - `$0.00074/10$` = **real session spend** (billed ÷ multiplier) out of your paid plan
 
 Set `creditMultiplier` under `quotaCost` in settings.json to override auto-detection manually.
