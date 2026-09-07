@@ -29,18 +29,35 @@ export interface QuotaCostConfig {
 
 export const DEFAULT_CONFIG: QuotaCostConfig = { enabled: false };
 
-/** Cost accumulator for a single assistant request (or session totals). */
+/** Accumulator for a single assistant request (or session totals). */
 export interface CostTotals {
   requests: number;
+  /** Costs in USD. */
   input: number;
   output: number;
   cacheRead: number;
   cacheWrite: number;
   total: number;
+  /** Token counts. */
+  tokInput: number;
+  tokOutput: number;
+  tokCacheRead: number;
+  tokCacheWrite: number;
 }
 
 export function emptyTotals(): CostTotals {
-  return { requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+  return {
+    requests: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 0,
+    tokInput: 0,
+    tokOutput: 0,
+    tokCacheRead: 0,
+    tokCacheWrite: 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -113,15 +130,27 @@ export function ingestUsage(state: CostState, provider: string | undefined, usag
     cacheRead: num(cost.cacheRead),
     cacheWrite: num(cost.cacheWrite),
     total: num(cost.total),
+    tokInput: num(u.input),
+    tokOutput: num(u.output),
+    tokCacheRead: num(u.cacheRead),
+    tokCacheWrite: num(u.cacheWrite),
   };
 
   state.last = totals;
   state.session.requests += 1;
-  state.session.input += totals.input;
-  state.session.output += totals.output;
-  state.session.cacheRead += totals.cacheRead;
-  state.session.cacheWrite += totals.cacheWrite;
-  state.session.total += totals.total;
+  for (const k of [
+    "input",
+    "output",
+    "cacheRead",
+    "cacheWrite",
+    "total",
+    "tokInput",
+    "tokOutput",
+    "tokCacheRead",
+    "tokCacheWrite",
+  ] as const) {
+    state.session[k] += totals[k];
+  }
   return true;
 }
 
@@ -133,11 +162,7 @@ function num(v: unknown): number {
 // Display computation (S1.3)
 // ---------------------------------------------------------------------------
 
-/** Percentage of the paid plan (e.g. the $10/mo subscription). */
-export function pctOfPlan(amount: number, planUsd: number): number | null {
-  if (!Number.isFinite(amount) || !Number.isFinite(planUsd) || planUsd <= 0) return null;
-  return (amount / planUsd) * 100;
-}
+/** Compact USD formatter tuned for per-request costs. */
 
 /** Compact USD formatter tuned for per-request costs. */
 export function fmtUsd(v: number): string {
@@ -148,33 +173,39 @@ export function fmtUsd(v: number): string {
 }
 
 
-/** Per-part breakdown in dollars: `↑$0.00008 ↓$0.00044 R$0.00219`. */
-export function fmtBreakdown(t: {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}): string {
-  const parts: string[] = [];
-  const push = (symbol: string, v: number) => {
-    if (v <= 0) return;
-    parts.push(`${symbol}${fmtUsd(v)}`);
-  };
-  push("↑", t.input);
-  push("↓", t.output);
-  push("R", t.cacheRead);
-  push("W", t.cacheWrite);
-  return parts.join(" ");
+/** USD-per-million-tokens formatter. */
+export function fmtPerM(v: number): string {
+  if (v >= 100) return `$${v.toFixed(0)}`;
+  if (v >= 1) return `$${v.toFixed(2)}`;
+  if (v >= 0.01) return `$${v.toFixed(3)}`;
+  if (v >= 0.001) return `$${v.toFixed(3)}`;
+  return `$${v.toFixed(4)}`;
 }
 
-
-/** Format a plan percentage that can be far below 1%. */
-export function fmtPct(pct: number): string {
-  if (pct >= 100) return pct.toFixed(0);
-  if (pct >= 10) return pct.toFixed(1);
-  if (pct >= 1) return pct.toFixed(2);
-  if (pct >= 0.1) return pct.toFixed(3);
-  return pct.toFixed(4);
+/**
+ * Cost per million tokens for each component, e.g. `↑$0.22/M ↓$0.66/M R$0.007/M`.
+ * Pass cost (USD) and token count per component; components with no tokens are skipped.
+ */
+export function fmtBreakdown(t: {
+  inputCost: number;
+  outputCost: number;
+  cacheReadCost: number;
+  cacheWriteCost: number;
+  tokInput: number;
+  tokOutput: number;
+  tokCacheRead: number;
+  tokCacheWrite: number;
+}): string {
+  const parts: string[] = [];
+  const push = (symbol: string, cost: number, tokens: number) => {
+    if (cost <= 0 || tokens <= 0) return;
+    parts.push(`${symbol}${fmtPerM((cost / tokens) * 1_000_000)}/M`);
+  };
+  push("↑", t.inputCost, t.tokInput);
+  push("↓", t.outputCost, t.tokOutput);
+  push("R", t.cacheReadCost, t.tokCacheRead);
+  push("W", t.cacheWriteCost, t.tokCacheWrite);
+  return parts.join(" ");
 }
 
 
@@ -193,24 +224,27 @@ export function buildCostSegment(
 
   const parts: string[] = [];
   if (state.last && state.last.total > 0) {
-    if (state.last.total < 0.01) {
-      const b = fmtBreakdown(state.last);
-      if (b) parts.push(`req ${b}`);
-      else parts.push(`req ${fmtUsd(state.last.total)}`);
-    } else {
-      parts.push(`req ${fmtUsd(state.last.total)}`);
-    }
+    const b = fmtBreakdown({
+      inputCost: state.last.input,
+      outputCost: state.last.output,
+      cacheReadCost: state.last.cacheRead,
+      cacheWriteCost: state.last.cacheWrite,
+      tokInput: state.last.tokInput,
+      tokOutput: state.last.tokOutput,
+      tokCacheRead: state.last.tokCacheRead,
+      tokCacheWrite: state.last.tokCacheWrite,
+    });
+    if (b) parts.push(`req ${b}`);
+    else parts.push(`req ${fmtUsd(state.last.total)}`);
   }
   const avg = state.session.requests > 0 ? state.session.total / state.session.requests : 0;
   if (state.session.requests > 1 && avg > 0) {
     parts.push(`moy ${fmtUsd(avg)}`);
   }
-  const pct = pctOfPlan(state.session.total, opts.planUsd ?? 0);
-  if (pct !== null && state.session.total > 0) {
-    // Dollars spent next to the percentage of the paid plan.
-    parts.push(`${fmtUsd(state.session.total)} · ${fmtPct(pct)}% de ${opts.planUsd ?? 0}$`);
+  if (state.session.total > 0 && opts.planUsd && opts.planUsd > 0) {
+    // Dollars spent out of the paid plan (no percentage).
+    parts.push(`${fmtUsd(state.session.total)}/${opts.planUsd}$`);
   }
-
   if (parts.length === 0) return null;
   return parts.join(" · ");
 }

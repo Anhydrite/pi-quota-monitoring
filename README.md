@@ -69,11 +69,12 @@ MIT
 Toggle with `/quota-cost` (persisted in `~/.pi/agent/settings.json` under `quotaCost`). When ON, a second segment appears on the quota line, right-aligned (hidden automatically when the terminal is too narrow):
 
 ```
-req ↑0.20 ↓0.98 R0.23 · moy $0.00103 · 0.0207%/10$
+req ↑$0.220/M ↓$0.660/M R$0.007/M · moy $0.00259 · $0.00776/10$
 ```
 
-- `req` = last assistant request cost, split into `↑` input / `↓` output / `R` cache reads (thousandths of a cent when under a cent)
-- `moy` = session average per request
-- `%` = share of your paid plan (default `10$`) consumed by this session
+- `req` = last assistant request, showing the **cost per million tokens** for `↑` input / `↓` output / `R` cache reads (derived from the real billed cost and token counts)
+- `moy` = session average cost per request
+- `$0.00776/10$` = session spend so far out of your paid plan (default `10$`)
+
 
 The cost comes from the **real billed amount** returned by the Command Code gateway (`provider-metadata`), which includes peak-hour pricing and model-specific rates — no local catalog estimation. Requires the [pi-commandcode-provider](https://github.com/patlux/pi-commandcode-provider) `feat/real-api-cost` fork (or a release containing that change) for accurate real costs.
