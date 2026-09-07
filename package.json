@@ -1,6 +1,6 @@
 {
   "name": "pi-quota-monitoring",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Pi extension - shows subscription quota usage in the status bar for Command Code and OpenCode Go",
   "type": "module",
   "keywords": [
@@ -36,7 +36,8 @@
   },
   "pi": {
     "extensions": [
-      "./extensions/quota-monitor.ts"
+      "./extensions/quota-monitor.ts",
+      "./extensions/request-cost-index.ts"
     ],
     "image": "https://raw.githubusercontent.com/Anhydrite/pi-quota-monitoring/main/assets/preview.png"
   }

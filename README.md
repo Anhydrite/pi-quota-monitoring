@@ -63,3 +63,17 @@ The status is set under the key `zz-quota`, which sorts alphabetically just afte
 ## License
 
 MIT
+
+## Per-request cost readout (optional)
+
+Toggle with `/quota-cost` (persisted in `~/.pi/agent/settings.json` under `quotaCost`). When ON, a second segment appears on the quota line, right-aligned (hidden automatically when the terminal is too narrow):
+
+```
+req ↑0.20 ↓0.98 R0.23 · moy $0.00103 · 0.0207%/10$
+```
+
+- `req` = last assistant request cost, split into `↑` input / `↓` output / `R` cache reads (thousandths of a cent when under a cent)
+- `moy` = session average per request
+- `%` = share of your paid plan (default `10$`) consumed by this session
+
+The cost comes from the **real billed amount** returned by the Command Code gateway (`provider-metadata`), which includes peak-hour pricing and model-specific rates — no local catalog estimation. Requires the [pi-commandcode-provider](https://github.com/patlux/pi-commandcode-provider) `feat/real-api-cost` fork (or a release containing that change) for accurate real costs.
