@@ -89,11 +89,13 @@ class RequestCostExtension {
       }
       ctx.ui.setFooter((tui, theme, footerData) => {
         this.tui = tui;
+        // `render` must capture the extension state via an arrow closure:
+        // a plain method on this object literal would rebind `this` to the
+        // literal and `this.state` would be undefined.
         return {
           invalidate() {},
-          render(width: number): string[] {
-            return renderFooter(ctx, theme, footerData, this.state);
-          },
+          render: (width: number): string[] =>
+            renderFooter(ctx, theme, footerData, this.state, width),
           dispose: footerData.onBranchChange(() => tui.requestRender()),
         };
       });
@@ -181,6 +183,7 @@ function renderFooter(
   theme: { fg(color: string, text: string): string },
   footerData: FooterDataLike,
   state: CostState,
+  width: number,
 ): string[] {
   const sm = ctx.sessionManager as unknown as {
     getEntries(): SessionEntry[];
