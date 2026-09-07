@@ -29,12 +29,13 @@ import {
   createCostState,
   ingestUsage,
   loadConfig,
+  resolvePlan,
   saveConfig,
-  type CostState,
-  type QuotaCostConfig,
 } from "./request-cost.ts";
+// Default paid plan assumption when auto-detection is unavailable (GOAT is
+// the most common $10 plan; auto-detection corrects it from the API).
+const PLAN_USD = 10;
 
-const PLAN_USD = 10; // paid Command Code plan used for the % readout
 
 type FooterTheme = ReturnType<ExtensionContext["ui"] extends never ? never : never>;
 
@@ -44,12 +45,31 @@ class RequestCostExtension {
   private state: CostState = createCostState();
   private config: QuotaCostConfig = { enabled: false };
   private footerActive = false;
+  /** Resolved plan: multiplier (credits per paid $) and paid plan amount. */
+  private plan = { multiplier: 1, costUsd: PLAN_USD };
 
   async sync(ctx: ExtensionContext): Promise<void> {
     this.ctx = ctx;
     this.config = await loadConfig();
     this.state = createCostState();
+    await this.resolvePlanFromApi(ctx);
     this.applyFooter();
+  }
+
+  private async resolvePlanFromApi(ctx: ExtensionContext): Promise<void> {
+    try {
+      const apiKey = await ctx.modelRegistry?.getApiKeyForProvider?.("commandcode");
+      const resolved = await resolvePlan({
+        apiKey,
+        configOverride: this.config.creditMultiplier,
+      });
+      this.plan = {
+        multiplier: resolved.multiplier,
+        costUsd: resolved.costUsd > 0 ? resolved.costUsd : PLAN_USD,
+      };
+    } catch {
+      this.plan = { multiplier: 1, costUsd: PLAN_USD };
+    }
   }
 
   async setEnabled(enabled: boolean): Promise<void> {
@@ -95,7 +115,7 @@ class RequestCostExtension {
         return {
           invalidate() {},
           render: (width: number): string[] =>
-            renderFooter(ctx, theme, footerData, this.state, width),
+            renderFooter(ctx, theme, footerData, this.state, this.plan, width),
           dispose: footerData.onBranchChange(() => tui.requestRender()),
         };
       });
@@ -183,6 +203,7 @@ function renderFooter(
   theme: { fg(color: string, text: string): string },
   footerData: FooterDataLike,
   state: CostState,
+  plan: { multiplier: number; costUsd: number },
   width: number,
 ): string[] {
   const sm = ctx.sessionManager as unknown as {
@@ -250,7 +271,10 @@ function renderFooter(
   const statuses = Array.from(footerData.getExtensionStatuses().entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([, text]) => sanitize(text));
-  const costSegment = buildCostSegment(state, { planUsd: PLAN_USD });
+  const costSegment = buildCostSegment(state, {
+    planUsd: plan.costUsd,
+    creditMultiplier: plan.multiplier,
+  });
   const segStr = costSegment ? theme.fg("accent", costSegment) : null;
   const statusLineRaw = composeStatusLine(statuses, segStr, width, visibleWidth);
 

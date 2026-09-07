@@ -25,9 +25,116 @@ const SETTINGS_PATH = join(getAgentDir(), "settings.json");
 
 export interface QuotaCostConfig {
   enabled: boolean;
+  /**
+   * Optional manual override of the plan multiplier (credits per paid dollar).
+   * When unset, the plan is auto-detected from the Command Code window caps
+   * (5h / weekly limits) using the documented plan table.
+   */
+  creditMultiplier?: number;
 }
 
 export const DEFAULT_CONFIG: QuotaCostConfig = { enabled: false };
+
+// ---------------------------------------------------------------------------
+// Plan auto-detection
+// ---------------------------------------------------------------------------
+// Command Code's public pricing table maps each plan's rolling window caps to
+// its monthly credit allowance and monthly cost. The "real" cost to the user
+// is billed credits / creditMultiplier (e.g. GOAT: 70$ of usage per 10$ paid).
+// Detect the plan from the caps the billing API reports so nothing is
+// hard-coded per user.
+
+interface PlanSpec {
+  name: string;
+  costUsd: number;
+  creditsUsd: number;
+  fiveHourCap: number;
+  weeklyCap: number;
+}
+
+const PLANS: PlanSpec[] = [
+  { name: "Go", costUsd: 1, creditsUsd: 10, fiveHourCap: 3, weeklyCap: 6 },
+  { name: "GOAT", costUsd: 10, creditsUsd: 70, fiveHourCap: 14, weeklyCap: 35 },
+  { name: "Pro", costUsd: 20, creditsUsd: 80, fiveHourCap: 16, weeklyCap: 40 },
+  { name: "Max 10×", costUsd: 100, creditsUsd: 150, fiveHourCap: 45, weeklyCap: 90 },
+  { name: "Max 20×", costUsd: 200, creditsUsd: 300, fiveHourCap: 90, weeklyCap: 180 },
+  { name: "Team Pro", costUsd: 40, creditsUsd: 40, fiveHourCap: 12, weeklyCap: 24 },
+];
+
+export interface DetectedPlan {
+  name: string;
+  costUsd: number;
+  creditsUsd: number;
+  /** credits per paid dollar, e.g. 7 for GOAT. */
+  multiplier: number;
+}
+
+/**
+ * Find the plan whose 5h/weekly caps match the reported window limits.
+ * Returns null when no documented plan matches (caller falls back to config).
+ */
+export function detectPlan(fiveHourCap: number, weeklyCap: number): DetectedPlan | null {
+  for (const p of PLANS) {
+    if (Math.abs(p.fiveHourCap - fiveHourCap) < 0.01 && Math.abs(p.weeklyCap - weeklyCap) < 0.01) {
+      return {
+        name: p.name,
+        costUsd: p.costUsd,
+        creditsUsd: p.creditsUsd,
+        multiplier: p.creditsUsd / p.costUsd,
+      };
+    }
+  }
+  return null;
+}
+
+
+/**
+ * Resolve the effective plan multiplier: config override wins, otherwise
+ * auto-detect from the Command Code billing window caps (5h / weekly).
+ * Returns { multiplier, costUsd, name } — multiplier defaults to 1 when the
+ * plan cannot be determined and no override is set.
+ */
+export async function resolvePlan(opts: {
+  apiKey?: string;
+  apiBase?: string;
+  configOverride?: number;
+}): Promise<{ multiplier: number; costUsd: number; name: string | null }> {
+  if (opts.configOverride && opts.configOverride > 0) {
+    return { multiplier: opts.configOverride, costUsd: 0, name: "manual" };
+  }
+  if (!opts.apiKey) return { multiplier: 1, costUsd: 0, name: null };
+  try {
+    const base = opts.apiBase ?? "https://api.commandcode.ai";
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const res = await fetch(`${base}/alpha/billing/credits`, {
+        headers: { accept: "application/json", Authorization: `Bearer ${opts.apiKey}` },
+        signal: controller.signal,
+      });
+      if (!res.ok) return { multiplier: 1, costUsd: 0, name: null };
+      const data = (await res.json()) as {
+        windowLimits?: { fiveHour?: { cap?: number }; weekly?: { cap?: number } };
+      };
+      const fiveHour = data.windowLimits?.fiveHour?.cap;
+      const weekly = data.windowLimits?.weekly?.cap;
+      if (typeof fiveHour !== "number" || typeof weekly !== "number") {
+        return { multiplier: 1, costUsd: 0, name: null };
+      }
+      const plan = detectPlan(fiveHour, weekly);
+      if (!plan) return { multiplier: 1, costUsd: 0, name: null };
+      return {
+        multiplier: plan.multiplier,
+        costUsd: plan.costUsd,
+        name: plan.name,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return { multiplier: 1, costUsd: 0, name: null };
+  }
+}
 
 /** Accumulator for a single assistant request (or session totals). */
 export interface CostTotals {
@@ -80,8 +187,19 @@ async function writeSettingsFile(data: Record<string, unknown>): Promise<void> {
 export async function loadConfig(): Promise<QuotaCostConfig> {
   const settings = await readSettingsFile();
   const raw = settings[SETTINGS_KEY];
-  if (raw && typeof raw === "object" && typeof (raw as { enabled?: unknown }).enabled === "boolean") {
-    return { enabled: (raw as { enabled: boolean }).enabled };
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    const cfg: QuotaCostConfig = {
+      enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_CONFIG.enabled,
+    };
+    if (
+      typeof obj.creditMultiplier === "number" &&
+      Number.isFinite(obj.creditMultiplier) &&
+      obj.creditMultiplier > 0
+    ) {
+      cfg.creditMultiplier = obj.creditMultiplier;
+    }
+    return cfg;
   }
   return { ...DEFAULT_CONFIG };
 }
@@ -163,8 +281,6 @@ function num(v: unknown): number {
 // ---------------------------------------------------------------------------
 
 /** Compact USD formatter tuned for per-request costs. */
-
-/** Compact USD formatter tuned for per-request costs. */
 export function fmtUsd(v: number): string {
   if (v >= 1) return `$${v.toFixed(2)}`;
   if (v >= 0.01) return `$${v.toFixed(3)}`;
@@ -195,11 +311,14 @@ export function fmtBreakdown(t: {
   tokOutput: number;
   tokCacheRead: number;
   tokCacheWrite: number;
+  /** Divide every cost by this before computing per-M (default 1). */
+  divideBy?: number;
 }): string {
+  const div = t.divideBy && t.divideBy > 0 ? t.divideBy : 1;
   const parts: string[] = [];
   const push = (symbol: string, cost: number, tokens: number) => {
     if (cost <= 0 || tokens <= 0) return;
-    parts.push(`${symbol}${fmtPerM((cost / tokens) * 1_000_000)}/M`);
+    parts.push(`${symbol}${fmtPerM((cost / div / tokens) * 1_000_000)}/M`);
   };
   push("↑", t.inputCost, t.tokInput);
   push("↓", t.outputCost, t.tokOutput);
@@ -218,13 +337,15 @@ export function fmtBreakdown(t: {
 
 export function buildCostSegment(
   state: CostState,
-  opts: { planUsd?: number; envPct?: number | null },
+  opts: { planUsd?: number; creditMultiplier?: number },
 ): string | null {
   if (!state.last && state.session.requests === 0) return null;
+  const mult = opts.creditMultiplier && opts.creditMultiplier > 0 ? opts.creditMultiplier : 1;
+  const plan = opts.planUsd && opts.planUsd > 0 ? opts.planUsd : 0;
 
   const parts: string[] = [];
   if (state.last && state.last.total > 0) {
-    const b = fmtBreakdown({
+    const base = {
       inputCost: state.last.input,
       outputCost: state.last.output,
       cacheReadCost: state.last.cacheRead,
@@ -233,17 +354,24 @@ export function buildCostSegment(
       tokOutput: state.last.tokOutput,
       tokCacheRead: state.last.tokCacheRead,
       tokCacheWrite: state.last.tokCacheWrite,
-    });
-    if (b) parts.push(`req ${b}`);
+    };
+    const billed = fmtBreakdown(base);
+    if (billed) parts.push(`req ${billed}`);
     else parts.push(`req ${fmtUsd(state.last.total)}`);
+
+    if (mult > 1) {
+      const real = fmtBreakdown({ ...base, divideBy: mult });
+      if (real && real !== billed) parts.push(`réel ${real}`);
+    }
   }
   const avg = state.session.requests > 0 ? state.session.total / state.session.requests : 0;
   if (state.session.requests > 1 && avg > 0) {
     parts.push(`moy ${fmtUsd(avg)}`);
   }
-  if (state.session.total > 0 && opts.planUsd && opts.planUsd > 0) {
-    // Dollars spent out of the paid plan (no percentage).
-    parts.push(`${fmtUsd(state.session.total)}/${opts.planUsd}$`);
+  if (state.session.total > 0 && plan > 0) {
+    // Real spend = billed session total / plan multiplier, out of the paid plan.
+    const realSpend = state.session.total / (mult > 1 ? mult : 1);
+    parts.push(`${fmtUsd(realSpend)}/${plan}$`);
   }
   if (parts.length === 0) return null;
   return parts.join(" · ");
