@@ -22,55 +22,80 @@ import type { TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
-  buildCostSegment,
   buildPwdLine,
   buildStatsLine,
   composeStatusLine,
-  createCostState,
-  ingestUsage,
   loadConfig,
-  resolvePlan,
+  rateSegmentCandidates,
   saveConfig,
 } from "./request-cost.ts";
-// Default paid plan assumption when auto-detection is unavailable (GOAT is
-// the most common $10 plan; auto-detection corrects it from the API).
-const PLAN_USD = 10;
+import { planMultiplier, RateLedger } from "./rate-ledger.ts";
 
 
 type FooterTheme = ReturnType<ExtensionContext["ui"] extends never ? never : never>;
 
+/** Mirror of the extension's allowance so the pure footer renderer can use it. */
+let lastKnownAllowanceUsd: number | null = null;
+
 class RequestCostExtension {
   private ctx: ExtensionContext | null = null;
   private tui: TUI | null = null;
-  private state: CostState = createCostState();
+  /** Billed rates recovered from the gateway's own invoices, per model. */
+  private ledger = new RateLedger();
   private config: QuotaCostConfig = { enabled: false };
   private footerActive = false;
-  /** Resolved plan: multiplier (credits per paid $) and paid plan amount. */
-  private plan = { multiplier: 1, costUsd: PLAN_USD };
+  /**
+   * Plan usage allowance in USD, read from the API (remaining monthly credits
+   * plus what the period already consumed). Only used with the user-declared
+   * plan price to turn billed credits into money actually spent.
+   */
+  private allowanceUsd: number | null = null;
+  private allowanceFetchedAt = 0;
 
   async sync(ctx: ExtensionContext): Promise<void> {
     this.ctx = ctx;
     this.config = await loadConfig();
-    this.state = createCostState();
-    await this.resolvePlanFromApi(ctx);
+    await this.refreshAllowance(ctx);
     this.applyFooter();
     this.publishStatus();
   }
 
-  private async resolvePlanFromApi(ctx: ExtensionContext): Promise<void> {
+  /** Reads the plan's usage allowance from the API (facts only, no price). */
+  private async refreshAllowance(ctx: ExtensionContext): Promise<void> {
     try {
       const apiKey = await ctx.modelRegistry?.getApiKeyForProvider?.("commandcode");
-      const resolved = await resolvePlan({
-        apiKey,
-        configOverride: this.config.creditMultiplier,
-      });
-      this.plan = {
-        multiplier: resolved.multiplier,
-        costUsd: resolved.costUsd > 0 ? resolved.costUsd : PLAN_USD,
-      };
+      if (!apiKey) return;
+      const headers = { accept: "application/json", Authorization: `Bearer ${apiKey}` };
+      const signal = AbortSignal.timeout(10_000);
+      const [creditsRes, usageRes] = await Promise.all([
+        fetch("https://api.commandcode.ai/alpha/billing/credits", { headers, signal }),
+        fetch("https://api.commandcode.ai/alpha/usage/summary", { headers, signal }),
+      ]);
+      if (!creditsRes.ok || !usageRes.ok) return;
+      const credits = (await creditsRes.json()) as { credits?: { monthlyCredits?: number } };
+      const usage = (await usageRes.json()) as { totalCost?: number };
+      const remaining = credits.credits?.monthlyCredits;
+      const used = usage.totalCost;
+      if (typeof remaining === "number" && typeof used === "number" && remaining + used > 0) {
+        this.allowanceUsd = remaining + used;
+        lastKnownAllowanceUsd = this.allowanceUsd;
+        this.allowanceFetchedAt = Date.now();
+      }
     } catch {
-      this.plan = { multiplier: 1, costUsd: PLAN_USD };
+      /* allowance is optional: without it the real-cost part is omitted */
     }
+  }
+
+  /** Credits per paid dollar: API allowance divided by the declared plan price. */
+  private multiplier(): number | null {
+    return planMultiplier(this.config.planMonthlyUsd, this.allowanceUsd ?? undefined);
+  }
+
+  /** Records what the user pays per month (the API exposes no plan price). */
+  async setPlanPrice(planMonthlyUsd: number): Promise<void> {
+    this.config = await saveConfig({ planMonthlyUsd });
+    this.publishStatus();
+    this.requestRender();
   }
 
   async setEnabled(enabled: boolean): Promise<void> {
@@ -99,11 +124,21 @@ class RequestCostExtension {
 
   handleMessageEnd(event: MessageEndEvent): void {
     if (event.message.role !== "assistant") return;
-    const m = event.message as { provider?: string; usage?: Usage };
-    if (ingestUsage(this.state, m.provider, m.usage)) {
-      this.publishStatus();
-      this.requestRender();
+    const m = event.message as { provider?: string; model?: string; usage?: Usage };
+    const provider = (m.provider ?? "").toLowerCase();
+    if (provider !== "commandcode" && provider !== "opencode-go" && provider !== "opencode") return;
+    if (!this.ledger.record(m.usage ?? {}, m.model ?? this.currentModelId())) return;
+    this.publishStatus();
+    this.requestRender();
+    // Keep the allowance fresh without polling the API on every request.
+    if (this.ctx && Date.now() - this.allowanceFetchedAt > 5 * 60_000) {
+      void this.refreshAllowance(this.ctx)
     }
+  }
+
+  private currentModelId(): string {
+    const model = this.ctx?.model as { id?: string } | undefined;
+    return model?.id ?? "unknown";
   }
 
   /**
@@ -115,10 +150,8 @@ class RequestCostExtension {
   private publishStatus(): void {
     const ctx = this.ctx;
     if (!ctx) return;
-    const segment = buildCostSegment(this.state, {
-      planUsd: this.plan.costUsd,
-      creditMultiplier: this.plan.multiplier,
-    });
+    const segment =
+      rateSegmentCandidates(this.ledger.currentRates(), this.multiplier())[0] ?? null;
     try {
       ctx.ui.setStatus("zz-cost", segment ?? undefined);
     } catch {
@@ -152,7 +185,7 @@ class RequestCostExtension {
         return {
           invalidate() {},
           render: (width: number): string[] =>
-            renderFooter(ctx, theme, footerData, this.state, this.plan, width),
+            renderFooter(ctx, theme, footerData, this.ledger, this.config, width),
           dispose: footerData.onBranchChange(() => tui.requestRender()),
         };
       });
@@ -243,12 +276,12 @@ function renderFooter(
   ctx: ExtensionContext,
   theme: { fg(color: string, text: string): string },
   footerData: FooterDataLike,
-  state: CostState,
-  plan: { multiplier: number; costUsd: number },
+  ledger: RateLedger,
+  config: QuotaCostConfig,
   width: number,
 ): string[] {
   try {
-    return renderFooterInner(ctx, theme, footerData, state, plan, width);
+    return renderFooterInner(ctx, theme, footerData, ledger, config, width);
   } catch (err) {
     // Never take the whole footer down on a transient render error.
     try {
@@ -276,8 +309,8 @@ function renderFooterInner(
   ctx: ExtensionContext,
   theme: { fg(color: string, text: string): string },
   footerData: FooterDataLike,
-  state: CostState,
-  plan: { multiplier: number; costUsd: number },
+  ledger: RateLedger,
+  config: QuotaCostConfig,
   width: number,
 ): string[] {
   const sm = ctx.sessionManager as unknown as {
@@ -348,17 +381,20 @@ function renderFooterInner(
     .filter(([key]) => key !== "zz-cost")
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([, text]) => sanitize(text));
-  const costSegment = buildCostSegment(state, {
-    planUsd: plan.costUsd,
-    creditMultiplier: plan.multiplier,
-  });
-  const segStr = costSegment ? theme.fg("accent", costSegment) : null;
-  const statusLineRaw = composeStatusLine(statuses, segStr, width, visibleWidth);
+  const candidates = rateSegmentCandidates(
+    ledger.currentRates(),
+    planMultiplier(config.planMonthlyUsd, lastKnownAllowanceUsd),
+  );
+  const themed = candidates.map((c) => theme.fg("accent", c));
+  const composed = composeStatusLine(statuses, themed, width, visibleWidth);
 
   const lines = [cwdLine, statsLine];
-  if (statusLineRaw) {
-    lines.push(truncateToWidth(statusLineRaw, width, theme.fg("dim", "...")));
+  if (composed.statusLine) {
+    lines.push(truncateToWidth(composed.statusLine, width, theme.fg("dim", "...")));
   }
+  // No room beside the quotas: the readout gets its own (compacted) line rather
+  // than disappearing.
+  if (composed.ownCostLine) lines.push(composed.ownCostLine);
   return lines;
 }
 
@@ -370,9 +406,27 @@ const ext = new RequestCostExtension();
 
 export default function (pi: ExtensionAPI): void {
   pi.registerCommand("quota-cost", {
-    description: "Toggle per-request cost readout (right-aligned in footer)",
-    handler: async (_args, ctx) => {
-      const next = !ext.isEnabled();
+    description: "Toggle the billed-rate readout, or declare the plan price: /quota-cost [on|off|plan <usd>]",
+    handler: async (args, ctx) => {
+      const arg = (args ?? "").trim();
+      const planMatch = /^plan\s+([0-9]+(?:\.[0-9]+)?)$/i.exec(arg);
+      if (planMatch) {
+        const usd = Number(planMatch[1]);
+        await ext.setPlanPrice(usd);
+        ctx.ui.notify(
+          `Plan price set to $${usd}/month — the readout now also shows what each rate costs you after the plan multiplier.`,
+          "info",
+        );
+        return;
+      }
+      if (arg && !/^(on|off)$/i.test(arg)) {
+        ctx.ui.notify(
+          "Usage: /quota-cost [on|off] to toggle, or /quota-cost plan <monthly usd> to declare what you pay.",
+          "warning",
+        );
+        return;
+      }
+      const next = arg ? /^on$/i.test(arg) : !ext.isEnabled();
       await ext.setEnabled(next);
       ctx.ui.notify(
         next ? "Per-request cost readout ON" : "Per-request cost readout OFF",

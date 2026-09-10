@@ -19,10 +19,11 @@
     "node": ">=22"
   },
   "files": [
-    "extensions/",
-    "assets/preview.png",
+    "LICENSE",
     "README.md",
-    "LICENSE"
+    "assets/preview.png",
+    "extensions/",
+    "tests/"
   ],
   "repository": {
     "type": "git",
@@ -40,5 +41,9 @@
       "./extensions/request-cost-index.ts"
     ],
     "image": "https://raw.githubusercontent.com/Anhydrite/pi-quota-monitoring/main/assets/preview.png"
+  },
+  "scripts": {
+    "test": "node --test \"tests/*.test.ts\"",
+    "test:watch": "node --test --watch \"tests/*.test.ts\""
   }
 }
